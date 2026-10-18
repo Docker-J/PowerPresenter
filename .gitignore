@@ -1,0 +1,16 @@
+.build/
+.swiftpm/
+*.xcodeproj
+*.xcworkspace
+DerivedData/
+.DS_Store
+
+# App builds & archives
+PowerPresenter.app
+*.zip
+*.dmg
+*.pkg
+
+# Temp / Scratch scripts
+a.scpt
+*.log
