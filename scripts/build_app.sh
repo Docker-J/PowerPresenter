@@ -7,7 +7,11 @@ cd "$DIR"
 mkdir -p .build/tmp .build/cache
 
 echo "🔨 Building PowerPresenter (Release)..."
-DEV_DIR="${DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null || echo "/Applications/Xcode.app/Contents/Developer")}"
+if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+    DEV_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+else
+    DEV_DIR="${DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null)}"
+fi
 TMPDIR="${DIR}/.build/tmp" \
 SWIFT_MODULE_CACHE_PATH="${DIR}/.build/cache" \
 CLANG_MODULE_CACHE_PATH="${DIR}/.build/cache" \
