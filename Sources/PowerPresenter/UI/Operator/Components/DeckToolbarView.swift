@@ -6,11 +6,13 @@ public struct DeckToolbarView: View {
     @ObservedObject var engine: PresentationEngine
     @ObservedObject var screens: ScreenCoordinator
     @ObservedObject var updater = AppUpdateManager.shared
+    @ObservedObject var audioManager = AudioOutputManager.shared
 
     @State private var isShowingDisplayConfig = false
     @State private var isShowingStageEditor = false
     @State private var isShowingMIDISettings = false
     @State private var isShowingServiceFlow = false
+    @State private var isShowingAudioSettings = false
 
     public init(engine: PresentationEngine, screens: ScreenCoordinator) {
         self.engine = engine
@@ -47,7 +49,7 @@ public struct DeckToolbarView: View {
                         .fill(screens.connectedScreens.count > 1 ? Color.green : Color.blue)
                         .frame(width: 8, height: 8)
 
-                    Text("\(screens.connectedScreens.count) Display(s) • Active Stage Preset: \(engine.activeStagePreset?.name ?? "Standard")")
+                    Text("\(screens.connectedScreens.count) Display(s) • Audio: \(audioManager.currentSelectedDeviceName) • Active Stage Preset: \(engine.activeStagePreset?.name ?? "Standard")")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
@@ -118,6 +120,13 @@ public struct DeckToolbarView: View {
             .buttonStyle(.bordered)
             .help("Configure CoreMIDI output destinations, virtual ports, and test MIDI cues")
 
+            // Audio Output Routing Button
+            Button(action: { isShowingAudioSettings = true }) {
+                Label("Audio...", systemImage: "speaker.wave.2")
+            }
+            .buttonStyle(.bordered)
+            .help("Configure sound output source (USB Audio Interface, HDMI, Bluetooth, Built-in Speakers) & master volume")
+
             Divider()
                 .frame(height: 24)
 
@@ -169,6 +178,9 @@ public struct DeckToolbarView: View {
         }
         .sheet(isPresented: $isShowingMIDISettings) {
             MIDISettingsSheetView()
+        }
+        .sheet(isPresented: $isShowingAudioSettings) {
+            AudioSettingsSheetView()
         }
     }
 

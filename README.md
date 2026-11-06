@@ -47,7 +47,14 @@ Designed for live productions, multi-screen houses of worship, and zero-latency 
   - Stage Alert Banners (flashes operator messages in yellow across the stage display)
 - **Color Themes**: High-Contrast Amber, Cyber Cyan, Classic White, and Stage Emerald.
 
-### 6. MIDI Automation & Zero-Latency Engine (< 0.2ms)
+### 6. Sound Output Routing & Hardware Device Selector
+- **CoreAudio Hardware Routing**: Select specific audio destinations (USB Audio Interfaces, HDMI, Bluetooth speakers, Built-in Speakers, or macOS System Default) directly from the **`Audio...`** toolbar button or `Audio` menu bar.
+- **Independent Playback Device**: AVPlayer routes video soundtracks and background media directly to the selected hardware without changing the macOS system-wide default audio device.
+- **Real-Time Hotplug & Auto-Fallback**: Automatically detects newly connected or disconnected audio hardware in real time via CoreAudio listeners.
+- **Audio Test Ping**: Play short diagnostic chimes to verify hardware sound routing before live services.
+- **Media Master Volume**: In-app master volume control (0%–100%) independent of system volume.
+
+### 7. MIDI Automation & Zero-Latency Engine (< 0.2ms)
 - **Hardware MIDI Triggers**: Automatic Program Change, Control Change, or Note On triggers bound to slide entries for lighting consoles, audio mixers, and Ableton Live.
 - **Unified `@MainActor` memory model** with direct `CATransaction` dispatch.
 - **Hardware GPU Transitions**: Cut, Crossfade (0.35s / 0.75s), Push Left / Right, and Cinematic Zoom.

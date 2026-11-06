@@ -5,6 +5,7 @@ struct PowerPresenterApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @ObservedObject var engine = PresentationEngine.shared
     @ObservedObject var updater = AppUpdateManager.shared
+    @ObservedObject var audioManager = AudioOutputManager.shared
     @AppStorage("operatorThumbnailSize") private var thumbnailSize: Double = 210.0
 
     var body: some Scene {
@@ -82,6 +83,33 @@ struct PowerPresenterApp: App {
                     ScreenCoordinator.shared.toggleStageWindow()
                 }
                 .keyboardShortcut("s", modifiers: [.command])
+            }
+
+            CommandMenu("Audio") {
+                Button("macOS System Default") {
+                    AudioOutputManager.shared.selectSystemDefault()
+                }
+
+                Divider()
+
+                ForEach(AudioOutputManager.shared.availableDevices) { device in
+                    Button {
+                        AudioOutputManager.shared.selectDevice(uid: device.id)
+                    } label: {
+                        if AudioOutputManager.shared.selectedDeviceUID == device.id {
+                            Text("✓ \(device.name)")
+                        } else {
+                            Text("   \(device.name)")
+                        }
+                    }
+                }
+
+                Divider()
+
+                Button("Play Test Sound Chime") {
+                    AudioOutputManager.shared.playTestSound()
+                }
+                .keyboardShortcut("t", modifiers: [.command, .option])
             }
         }
     }

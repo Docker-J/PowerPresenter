@@ -163,6 +163,7 @@ public final class PresentationEngine: ObservableObject {
         let playerItem = AVPlayerItem(asset: asset)
         let player = AVPlayer(playerItem: playerItem)
         player.isMuted = isMediaCleared
+        AudioOutputManager.shared.configurePlayer(player)
 
         self.activePlayer = player
         self.mediaDuration = 0.0
