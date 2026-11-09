@@ -42,6 +42,8 @@ public final class DeckLoader {
             }
 
             try? FileManager.default.copyItem(at: url, to: asciiSourcePPTX)
+            // Mark temporary copy as read-only to prevent Office write-lock prompts
+            try? FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: asciiSourcePPTX.path)
             let targetSource = FileManager.default.fileExists(atPath: asciiSourcePPTX.path) ? asciiSourcePPTX : url
 
             await ensurePowerPointRunning()
@@ -144,21 +146,67 @@ public final class DeckLoader {
             try
                 set pptxHFS to (POSIX file "\(pptxPath)") as string
                 set pdfHFS to (POSIX file "\(pdfPath)") as string
-                
-                open (POSIX file "\(pptxPath)")
-                
-                repeat 35 times
-                    try
-                        if (exists active presentation) then
-                            if (count of slides of active presentation) > 0 then exit repeat
-                        end if
-                    end try
-                    delay 0.2
-                end repeat
-                delay 0.3
-                
+            end try
+        end tell
+        
+        -- Open asynchronously so missing font / read-only modal dialogs do not hang the script
+        ignoring application responses
+            tell application "Microsoft PowerPoint"
+                try
+                    open (POSIX file "\(pptxPath)")
+                end try
+            end tell
+        end ignoring
+        
+        -- Check and auto-confirm missing font / read-only prompts
+        repeat 35 times
+            tell application "Microsoft PowerPoint"
+                try
+                    if (exists active presentation) then
+                        if (count of slides of active presentation) > 0 then exit repeat
+                    end if
+                end try
+            end tell
+            
+            tell application "System Events"
+                try
+                    if exists process "Microsoft PowerPoint" then
+                        tell process "Microsoft PowerPoint"
+                            if exists window 1 then
+                                set frontWin to window 1
+                                if exists sheet 1 of frontWin then
+                                    set theSheet to sheet 1 of frontWin
+                                    repeat with btn in (every button of theSheet)
+                                        set btnName to name of btn
+                                        if btnName contains "읽기" or btnName contains "Read" or btnName contains "열기" or btnName contains "Open" or btnName contains "확인" or btnName contains "OK" then
+                                            click btn
+                                            exit repeat
+                                        end if
+                                    end repeat
+                                else
+                                    set winRole to value of attribute "AXSubrole" of frontWin
+                                    if winRole is "AXDialog" or (title of frontWin contains "PowerPoint" or title of frontWin is "") then
+                                        repeat with btn in (every button of frontWin)
+                                            set btnName to name of btn
+                                            if btnName contains "읽기" or btnName contains "Read" or btnName contains "열기" or btnName contains "Open" or btnName contains "확인" or btnName contains "OK" then
+                                                click btn
+                                                exit repeat
+                                            end if
+                                        end repeat
+                                    end if
+                                end if
+                            end if
+                        end tell
+                    end if
+                end try
+            end tell
+            delay 0.2
+        end repeat
+        delay 0.3
+        
+        tell application "Microsoft PowerPoint"
+            try
                 save active presentation in pdfHFS as save as PDF
-                
                 try
                     close active presentation saving no
                 end try
@@ -182,21 +230,67 @@ public final class DeckLoader {
             try
                 set pptxHFS to (POSIX file "\(pptxPath)") as string
                 set folderHFS to (POSIX file "\(folderPath)") as string
-                
-                open (POSIX file "\(pptxPath)")
-                
-                repeat 35 times
-                    try
-                        if (exists active presentation) then
-                            if (count of slides of active presentation) > 0 then exit repeat
-                        end if
-                    end try
-                    delay 0.2
-                end repeat
-                delay 0.3
-                
+            end try
+        end tell
+        
+        -- Open asynchronously so missing font / read-only modal dialogs do not hang the script
+        ignoring application responses
+            tell application "Microsoft PowerPoint"
+                try
+                    open (POSIX file "\(pptxPath)")
+                end try
+            end tell
+        end ignoring
+        
+        -- Check and auto-confirm missing font / read-only prompts
+        repeat 35 times
+            tell application "Microsoft PowerPoint"
+                try
+                    if (exists active presentation) then
+                        if (count of slides of active presentation) > 0 then exit repeat
+                    end if
+                end try
+            end tell
+            
+            tell application "System Events"
+                try
+                    if exists process "Microsoft PowerPoint" then
+                        tell process "Microsoft PowerPoint"
+                            if exists window 1 then
+                                set frontWin to window 1
+                                if exists sheet 1 of frontWin then
+                                    set theSheet to sheet 1 of frontWin
+                                    repeat with btn in (every button of theSheet)
+                                        set btnName to name of btn
+                                        if btnName contains "읽기" or btnName contains "Read" or btnName contains "열기" or btnName contains "Open" or btnName contains "확인" or btnName contains "OK" then
+                                            click btn
+                                            exit repeat
+                                        end if
+                                    end repeat
+                                else
+                                    set winRole to value of attribute "AXSubrole" of frontWin
+                                    if winRole is "AXDialog" or (title of frontWin contains "PowerPoint" or title of frontWin is "") then
+                                        repeat with btn in (every button of frontWin)
+                                            set btnName to name of btn
+                                            if btnName contains "읽기" or btnName contains "Read" or btnName contains "열기" or btnName contains "Open" or btnName contains "확인" or btnName contains "OK" then
+                                                click btn
+                                                exit repeat
+                                            end if
+                                        end repeat
+                                    end if
+                                end if
+                            end if
+                        end tell
+                    end if
+                end try
+            end tell
+            delay 0.2
+        end repeat
+        delay 0.3
+        
+        tell application "Microsoft PowerPoint"
+            try
                 save active presentation in folderHFS as save as PNG
-                
                 try
                     close active presentation saving no
                 end try
