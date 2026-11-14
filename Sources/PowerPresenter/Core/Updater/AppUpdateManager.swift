@@ -45,7 +45,7 @@ public final class AppUpdateManager: NSObject, ObservableObject {
     public static let shared = AppUpdateManager()
 
     // Default GitHub repository: can be overridden via UserDefaults
-    @AppStorage("customGitHubRepo") public var gitHubRepo: String = "junesoung412/PowerPresenter"
+    @AppStorage("customGitHubRepo") public var gitHubRepo: String = "Docker-J/PowerPresenter"
     @AppStorage("autoCheckUpdatesOnLaunch") public var autoCheckOnLaunch: Bool = true
 
     @Published public var isChecking: Bool = false
@@ -63,7 +63,7 @@ public final class AppUpdateManager: NSObject, ObservableObject {
     private var downloadedZipURL: URL?
 
     public var currentVersion: String {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.0.0"
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.1.0"
         return version
     }
 

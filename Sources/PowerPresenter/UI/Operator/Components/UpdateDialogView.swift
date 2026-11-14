@@ -82,7 +82,7 @@ public struct UpdateDialogView: View {
                         .font(.caption.bold())
                         .foregroundColor(.secondary)
                     HStack {
-                        TextField("예: junesoung412/PowerPresenter", text: $updater.gitHubRepo)
+                        TextField("예: Docker-J/PowerPresenter", text: $updater.gitHubRepo)
                             .textFieldStyle(.roundedBorder)
                             .font(.system(size: 12, design: .monospaced))
 
