@@ -7,10 +7,13 @@ cd "$DIR"
 mkdir -p .build/tmp .build/cache
 
 echo "🔨 Building PowerPresenter (Release)..."
-if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+CURRENT_XCODE="$(xcode-select -p 2>/dev/null || true)"
+if [ -n "$CURRENT_XCODE" ] && [[ "$CURRENT_XCODE" != *"CommandLineTools"* ]] && [ -d "$CURRENT_XCODE" ]; then
+    DEV_DIR="${DEVELOPER_DIR:-$CURRENT_XCODE}"
+elif [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
     DEV_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 else
-    DEV_DIR="${DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null)}"
+    DEV_DIR="${DEVELOPER_DIR:-$CURRENT_XCODE}"
 fi
 TMPDIR="${DIR}/.build/tmp" \
 SWIFT_MODULE_CACHE_PATH="${DIR}/.build/cache" \
@@ -26,8 +29,13 @@ ENTITLEMENTS_FILE="${DIR}/.build/tmp/PowerPresenter.entitlements"
 
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 
-# Copy compiled executable
-cp "${DIR}/.build/out/Products/Release/PowerPresenter" "${MACOS_DIR}/PowerPresenter"
+# Copy compiled executable dynamically via --show-bin-path
+BIN_PATH="$(TMPDIR="${DIR}/.build/tmp" DEVELOPER_DIR="${DEV_DIR}" swift build --disable-sandbox -c release --show-bin-path)"
+EXEC_PATH="${BIN_PATH}/PowerPresenter"
+if [ ! -f "${EXEC_PATH}" ]; then
+    EXEC_PATH="$(find "${DIR}/.build" -type f -name "PowerPresenter" -perm +111 | head -n 1)"
+fi
+cp "${EXEC_PATH}" "${MACOS_DIR}/PowerPresenter"
 chmod +x "${MACOS_DIR}/PowerPresenter"
 
 # Write Info.plist with Apple Events permissions
