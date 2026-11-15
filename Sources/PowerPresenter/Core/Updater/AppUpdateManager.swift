@@ -63,7 +63,7 @@ public final class AppUpdateManager: NSObject, ObservableObject {
     private var downloadedZipURL: URL?
 
     public var currentVersion: String {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.1.3"
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.1.4"
         return version
     }
 
@@ -250,22 +250,26 @@ public final class AppUpdateManager: NSObject, ObservableObject {
         SRC="\(newAppURL.path)"
         DST="\(targetAppPath)"
 
-        # Wait until old app quits
-        while kill -0 "$PID" 2>/dev/null; do
+        # Wait until old app quits (max 30s safety)
+        for _ in $(seq 1 150); do
+            if ! kill -0 "$PID" 2>/dev/null; then
+                break
+            fi
             sleep 0.2
         done
 
         # Remove quarantine attribute
         xattr -rd com.apple.quarantine "$SRC" 2>/dev/null || true
 
-        # Replace app
+        # Replace app atomically via ditto (preserves symlinks & signatures)
         rm -rf "$DST"
-        cp -R "$SRC" "$DST"
+        /usr/bin/ditto "$SRC" "$DST"
 
-        # Clean temp directory
-        rm -rf "$(dirname "$SRC")"
+        # Clean temp directory & script
+        rm -rf "$(dirname "$(dirname "$SRC")")"
+        rm -f "$0"
 
-        # Relaunch
+        # Relaunch updated app
         open -n "$DST"
         exit 0
         """
@@ -284,9 +288,21 @@ public final class AppUpdateManager: NSObject, ObservableObject {
             updaterProcess.arguments = [scriptURL.path]
             try updaterProcess.run()
 
-            // Gracefully terminate current app
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            // Dismiss update sheet & attached sheets first so terminate() is never blocked by a modal sheet
+            self.isDownloading = false
+            self.showUpdateDialog = false
+            for window in NSApplication.shared.windows {
+                if let sheet = window.attachedSheet {
+                    window.endSheet(sheet)
+                }
+            }
+
+            // Terminate cleanly, with a hard exit fallback if AppKit delays termination
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 NSApplication.shared.terminate(nil)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                exit(0)
             }
         } catch {
             self.isDownloading = false

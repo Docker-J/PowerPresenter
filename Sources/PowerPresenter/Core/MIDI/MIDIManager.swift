@@ -130,14 +130,14 @@ public final class MIDIManager: ObservableObject {
     }
 
     public func sendControlChange(channel: UInt8, controller: UInt8, value: UInt8) {
-        let ch = max(0, min(15, channel - 1))
+        let ch = UInt8(max(0, min(15, Int(channel) - 1)))
         let status = UInt8(0xB0 | ch)
         let bytes: [UInt8] = [status, controller & 0x7F, value & 0x7F]
         sendRawBytes(bytes)
     }
 
     public func sendNoteOn(channel: UInt8, note: UInt8, velocity: UInt8, autoNoteOffDelay: TimeInterval = 0.1) {
-        let ch = max(0, min(15, channel - 1))
+        let ch = UInt8(max(0, min(15, Int(channel) - 1)))
         let statusOn = UInt8(0x90 | ch)
         let bytesOn: [UInt8] = [statusOn, note & 0x7F, velocity & 0x7F]
         sendRawBytes(bytesOn)
@@ -155,14 +155,14 @@ public final class MIDIManager: ObservableObject {
     }
 
     public func sendProgramChange(channel: UInt8, program: UInt8) {
-        let ch = max(0, min(15, channel - 1))
+        let ch = UInt8(max(0, min(15, Int(channel) - 1)))
         let status = UInt8(0xC0 | ch)
         let bytes: [UInt8] = [status, program & 0x7F]
         sendRawBytes(bytes)
     }
 
     private func sendRawBytes(_ bytes: [UInt8]) {
-        guard !bytes.isEmpty else { return }
+        guard !bytes.isEmpty, bytes.count <= 256 else { return }
         let bufferSize = 1024
         let rawPtr = UnsafeMutableRawPointer.allocate(
             byteCount: bufferSize,
@@ -171,9 +171,9 @@ public final class MIDIManager: ObservableObject {
         defer { rawPtr.deallocate() }
         rawPtr.initializeMemory(as: UInt8.self, repeating: 0, count: bufferSize)
 
-        let packetList = rawPtr.assumingMemoryBound(to: MIDIPacketList.self)
-        var cur = MIDIPacketListInit(packetList)
-        cur = MIDIPacketListAdd(packetList, bufferSize, cur, 0, bytes.count, bytes)
+        let packetList = rawPtr.bindMemory(to: MIDIPacketList.self, capacity: 1)
+        let cur = MIDIPacketListInit(packetList)
+        _ = MIDIPacketListAdd(packetList, bufferSize, cur, 0, bytes.count, bytes)
 
         // 1. Always send to Virtual Source (local DAWs listening to PowerPresenter MIDI Out)
         if virtualSourceEndpoint != 0 {
@@ -201,22 +201,30 @@ public final class MIDIManager: ObservableObject {
     // MARK: - MIDI In Handling (Slide Remote Control)
 
     nonisolated private func handleIncomingMIDIPacketList(_ packetListPtr: UnsafePointer<MIDIPacketList>) {
-        let packetList = packetListPtr.pointee
-        var packet = packetList.packet
+        let numPackets = packetListPtr.pointee.numPackets
+        guard numPackets > 0 else { return }
 
-        for _ in 0..<packetList.numPackets {
-            let length = packet.length
+        guard let packetOffset = MemoryLayout<MIDIPacketList>.offset(of: \.packet) else { return }
+        var packetPtr = UnsafeRawPointer(packetListPtr)
+            .advanced(by: packetOffset)
+            .assumingMemoryBound(to: MIDIPacket.self)
+
+        for _ in 0..<numPackets {
+            let packet = packetPtr.pointee
+            let length = Int(packet.length)
             if length >= 2 {
-                let data = Mirror(reflecting: packet.data).children.map { $0.value as! UInt8 }
-                let status = data[0] & 0xF0
-                let byte1 = data[1]
-                let byte2 = (length >= 3) ? data[2] : 0
+                let (status, byte1, byte2): (UInt8, UInt8, UInt8) = withUnsafeBytes(of: packet.data) { rawBytes in
+                    let b0 = rawBytes.count > 0 ? rawBytes[0] : 0
+                    let b1 = rawBytes.count > 1 ? rawBytes[1] : 0
+                    let b2 = (length >= 3 && rawBytes.count > 2) ? rawBytes[2] : 0
+                    return (b0 & 0xF0, b1, b2)
+                }
 
                 Task { @MainActor in
                     self.processIncomingMIDI(status: status, byte1: byte1, byte2: byte2)
                 }
             }
-            packet = MIDIPacketNext(&packet).pointee
+            packetPtr = UnsafePointer(MIDIPacketNext(packetPtr))
         }
     }
 
