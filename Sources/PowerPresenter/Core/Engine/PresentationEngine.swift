@@ -45,6 +45,7 @@ public final class PresentationEngine: ObservableObject {
     @Published public private(set) var isTimerRunning: Bool = false
     private var timerCancellable: AnyCancellable?
     private var isUpdatingPresetInternally = false
+    private var activeSectionBlockHeadIndex: Int? = nil
 
     private let presetsStorageKey = "PowerPresenter.StageLayoutPresets.v4"
 
@@ -102,6 +103,7 @@ public final class PresentationEngine: ObservableObject {
         self.currentSlideIndex = 0
         self.isBlackoutActive = false
         self.isMediaCleared = false
+        self.activeSectionBlockHeadIndex = nil
 
         // Trigger slide 0's Stage Layout Preset Cue if assigned
         if let firstSlide = slides.first, let presetID = firstSlide.stageLayoutPresetID {
@@ -112,25 +114,45 @@ public final class PresentationEngine: ObservableObject {
         audienceRenderer?.engineDidReloadDeck()
     }
 
+    private func sectionBlockHeadIndex(forSlideAt index: Int) -> Int? {
+        guard slides.indices.contains(index), let secID = slides[index].serviceSectionID else {
+            return nil
+        }
+        var head = index
+        while head > 0 && slides[head - 1].serviceSectionID == secID {
+            head -= 1
+        }
+        return head
+    }
+
     public func navigateTo(index: Int, transition: TransitionType? = nil) {
         guard slides.indices.contains(index) else { return }
 
         let targetSlide = slides[index]
+        let targetBlockHead = sectionBlockHeadIndex(forSlideAt: index)
+        let isEnteringDifferentSectionBlock = (targetBlockHead != nil && targetBlockHead != activeSectionBlockHeadIndex)
+        activeSectionBlockHeadIndex = targetBlockHead
 
         // Automatically switch Stage Layout Preset if this slide has a Stage Layout Cue assigned
         if let presetID = targetSlide.stageLayoutPresetID {
             applyStagePreset(id: presetID)
-        } else if let secID = targetSlide.serviceSectionID,
-                  let sec = ServiceFlowManager.shared.section(for: secID),
-                  let defaultPresetID = sec.defaultStagePresetID,
-                  activeStagePresetID != defaultPresetID {
-            // Safety fallback: if jumping directly into the middle of a section, ensure section's default stage layout is active
-            applyStagePreset(id: defaultPresetID)
+        } else if let secID = targetSlide.serviceSectionID {
+            let headPresetID = targetBlockHead.flatMap { slides[$0].stageLayoutPresetID }
+            let fallbackPresetID = headPresetID ?? ServiceFlowManager.shared.section(for: secID)?.defaultStagePresetID
+            if let defaultPresetID = fallbackPresetID, activeStagePresetID != defaultPresetID {
+                // Safety fallback: if jumping directly into the middle of a section, ensure section's default stage layout is active
+                applyStagePreset(id: defaultPresetID)
+            }
         }
 
-        // Automatically fire MIDI Cue if this slide has a MIDI Cue assigned
+        // Automatically fire MIDI Cue if this slide has a MIDI Cue assigned, or if entering a different section block at a non-head slide
         if let midiCue = targetSlide.midiCue {
             MIDIManager.shared.send(cue: midiCue)
+        } else if isEnteringDifferentSectionBlock, let secID = targetSlide.serviceSectionID {
+            let headCue = targetBlockHead.flatMap { slides[$0].midiCue }
+            if let fallbackCue = headCue ?? ServiceFlowManager.shared.section(for: secID)?.triggerMIDICue {
+                MIDIManager.shared.send(cue: fallbackCue)
+            }
         }
 
         guard index != currentSlideIndex else { return }
@@ -327,9 +349,23 @@ public final class PresentationEngine: ObservableObject {
             }
         }
 
-        // If the currently live slide is within this newly assigned section, apply preset
-        if sorted.contains(currentSlideIndex), let presetID = section?.defaultStagePresetID {
-            applyStagePreset(id: presetID)
+        // If the currently live slide is within this newly assigned section, apply preset & track active section block
+        if sorted.contains(currentSlideIndex) {
+            activeSectionBlockHeadIndex = section != nil ? headIndex : nil
+            if let presetID = section?.defaultStagePresetID {
+                applyStagePreset(id: presetID)
+            }
+        }
+    }
+
+    public func syncSlidesWithUpdatedSection(_ section: ServiceSection) {
+        for i in slides.indices where slides[i].serviceSectionID == section.id {
+            slides[i].serviceSectionName = section.name
+            slides[i].serviceSectionColorHex = section.colorHex
+            if i == 0 || slides[i - 1].serviceSectionID != section.id {
+                slides[i].stageLayoutPresetID = section.defaultStagePresetID
+                slides[i].midiCue = section.triggerMIDICue
+            }
         }
     }
 

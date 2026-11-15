@@ -92,6 +92,7 @@ public struct ServiceFlowConfigSheetView: View {
                             availablePresets: engine.stagePresets,
                             onSave: { updated in
                                 flow.updateSection(updated)
+                                engine.syncSlidesWithUpdatedSection(updated)
                             },
                             onDelete: {
                                 if let idx = flow.sections.firstIndex(where: { $0.id == selected.id }) {
