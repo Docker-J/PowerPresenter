@@ -63,7 +63,7 @@ public final class AppUpdateManager: NSObject, ObservableObject {
     private var downloadedZipURL: URL?
 
     public var currentVersion: String {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.1.6"
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.1.7"
         return version
     }
 

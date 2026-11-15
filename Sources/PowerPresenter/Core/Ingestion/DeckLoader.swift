@@ -42,8 +42,13 @@ public final class DeckLoader {
             }
 
             try? FileManager.default.copyItem(at: url, to: asciiSourcePPTX)
-            // Mark temporary copy as read-only to prevent Office write-lock prompts
-            try? FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: asciiSourcePPTX.path)
+            if FileManager.default.fileExists(atPath: asciiSourcePPTX.path) {
+                // Keep writable so we can strip embedded Windows font metadata & write-protection locks
+                try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: asciiSourcePPTX.path)
+                await Task.detached(priority: .userInitiated) {
+                    Self.sanitizeTempPPTXForHeadlessOpen(pptxURL: asciiSourcePPTX)
+                }.value
+            }
             let targetSource = FileManager.default.fileExists(atPath: asciiSourcePPTX.path) ? asciiSourcePPTX : url
 
             await ensurePowerPointRunning()
@@ -140,73 +145,98 @@ public final class DeckLoader {
         }
     }
 
-    nonisolated private static func runPowerPointPDFExport(pptxPath: String, pdfPath: String) -> Bool {
+    /// Strips embedded font lists and modify-verifier XML metadata from the temporary `.pptx` copy
+    /// so Microsoft PowerPoint opens it silently without showing read-only or missing-font popups.
+    nonisolated private static func sanitizeTempPPTXForHeadlessOpen(pptxURL: URL) {
+        let fm = FileManager.default
+        let tempXMLDir = URL(fileURLWithPath: "/tmp/pp_xml_\(UUID().uuidString.prefix(8))")
+        defer { try? fm.removeItem(at: tempXMLDir) }
+
+        do {
+            try fm.createDirectory(at: tempXMLDir, withIntermediateDirectories: true)
+        } catch {
+            return
+        }
+
+        _ = runProcess(
+            executable: "/usr/bin/unzip",
+            arguments: ["-q", "-o", pptxURL.path, "ppt/presentation.xml", "ppt/_rels/presentation.xml.rels", "-d", tempXMLDir.path]
+        )
+
+        let presXMLURL = tempXMLDir.appendingPathComponent("ppt/presentation.xml")
+        stripRegexPatterns(
+            inFile: presXMLURL,
+            patterns: [
+                #"\s*embedTrueTypeFonts="[^"]*""#,
+                #"\s*saveSubsetFonts="[^"]*""#,
+                #"<[^>]*embeddedFontLst>[\s\S]*?</[^>]*embeddedFontLst>"#,
+                #"<[^>]*embeddedFontLst[^>]*/>"#,
+                #"<[^>]*modifyVerifier[^>]*/>"#
+            ]
+        )
+
+        let relsXMLURL = tempXMLDir.appendingPathComponent("ppt/_rels/presentation.xml.rels")
+        stripRegexPatterns(
+            inFile: relsXMLURL,
+            patterns: [
+                #"<Relationship[^>]*relationships/font"[^>]*/>"#
+            ]
+        )
+
+        var filesToUpdate: [String] = []
+        if fm.fileExists(atPath: presXMLURL.path) { filesToUpdate.append("ppt/presentation.xml") }
+        if fm.fileExists(atPath: relsXMLURL.path) { filesToUpdate.append("ppt/_rels/presentation.xml.rels") }
+
+        if !filesToUpdate.isEmpty {
+            _ = runProcess(
+                executable: "/usr/bin/zip",
+                arguments: ["-q", pptxURL.path] + filesToUpdate,
+                currentDirectoryURL: tempXMLDir
+            )
+        }
+
+        _ = runProcess(
+            executable: "/usr/bin/zip",
+            arguments: ["-q", "-d", pptxURL.path, "ppt/fonts/*"]
+        )
+    }
+
+    nonisolated private static func stripRegexPatterns(inFile fileURL: URL, patterns: [String]) {
+        guard var content = try? String(contentsOf: fileURL, encoding: .utf8) else { return }
+        for pattern in patterns {
+            content = content.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+        }
+        try? content.write(to: fileURL, atomically: true, encoding: .utf8)
+    }
+
+    @discardableResult
+    nonisolated private static func runProcess(
+        executable: String,
+        arguments: [String],
+        currentDirectoryURL: URL? = nil
+    ) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.currentDirectoryURL = currentDirectoryURL
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    nonisolated private static func runPowerPointExport(pptxPath: String, outputPath: String, saveAsFormat: String) -> Bool {
         let script = """
         tell application "Microsoft PowerPoint"
             try
-                set pptxHFS to (POSIX file "\(pptxPath)") as string
-                set pdfHFS to (POSIX file "\(pdfPath)") as string
-            end try
-        end tell
-        
-        -- Open asynchronously so missing font / read-only modal dialogs do not hang the script
-        ignoring application responses
-            tell application "Microsoft PowerPoint"
-                try
-                    open (POSIX file "\(pptxPath)")
-                end try
-            end tell
-        end ignoring
-        
-        -- Check and auto-confirm missing font / read-only prompts
-        repeat 35 times
-            tell application "Microsoft PowerPoint"
-                try
-                    if (exists active presentation) then
-                        if (count of slides of active presentation) > 0 then exit repeat
-                    end if
-                end try
-            end tell
-            
-            tell application "System Events"
-                try
-                    if exists process "Microsoft PowerPoint" then
-                        tell process "Microsoft PowerPoint"
-                            if exists window 1 then
-                                set frontWin to window 1
-                                if exists sheet 1 of frontWin then
-                                    set theSheet to sheet 1 of frontWin
-                                    repeat with btn in (every button of theSheet)
-                                        set btnName to name of btn
-                                        if btnName contains "읽기" or btnName contains "Read" or btnName contains "열기" or btnName contains "Open" or btnName contains "확인" or btnName contains "OK" then
-                                            click btn
-                                            exit repeat
-                                        end if
-                                    end repeat
-                                else
-                                    set winRole to value of attribute "AXSubrole" of frontWin
-                                    if winRole is "AXDialog" or (title of frontWin contains "PowerPoint" or title of frontWin is "") then
-                                        repeat with btn in (every button of frontWin)
-                                            set btnName to name of btn
-                                            if btnName contains "읽기" or btnName contains "Read" or btnName contains "열기" or btnName contains "Open" or btnName contains "확인" or btnName contains "OK" then
-                                                click btn
-                                                exit repeat
-                                            end if
-                                        end repeat
-                                    end if
-                                end if
-                            end if
-                        end tell
-                    end if
-                end try
-            end tell
-            delay 0.2
-        end repeat
-        delay 0.3
-        
-        tell application "Microsoft PowerPoint"
-            try
-                save active presentation in pdfHFS as save as PDF
+                set outputHFS to (POSIX file "\(outputPath)") as string
+                open (POSIX file "\(pptxPath)")
+                save active presentation in outputHFS as \(saveAsFormat)
                 try
                     close active presentation saving no
                 end try
@@ -219,91 +249,17 @@ public final class DeckLoader {
             end try
         end tell
         """
-        _ = runOsascriptWithTimeout(script: script, timeoutSeconds: 12.0)
+        return runOsascriptWithTimeout(script: script, timeoutSeconds: 30.0)
+    }
+
+    nonisolated private static func runPowerPointPDFExport(pptxPath: String, pdfPath: String) -> Bool {
+        _ = runPowerPointExport(pptxPath: pptxPath, outputPath: pdfPath, saveAsFormat: "save as PDF")
         return FileManager.default.fileExists(atPath: pdfPath)
     }
 
     nonisolated private static func runPowerPointPNGExport(pptxPath: String, folderPath: String) -> Bool {
         try? FileManager.default.createDirectory(atPath: folderPath, withIntermediateDirectories: true)
-        let script = """
-        tell application "Microsoft PowerPoint"
-            try
-                set pptxHFS to (POSIX file "\(pptxPath)") as string
-                set folderHFS to (POSIX file "\(folderPath)") as string
-            end try
-        end tell
-        
-        -- Open asynchronously so missing font / read-only modal dialogs do not hang the script
-        ignoring application responses
-            tell application "Microsoft PowerPoint"
-                try
-                    open (POSIX file "\(pptxPath)")
-                end try
-            end tell
-        end ignoring
-        
-        -- Check and auto-confirm missing font / read-only prompts
-        repeat 35 times
-            tell application "Microsoft PowerPoint"
-                try
-                    if (exists active presentation) then
-                        if (count of slides of active presentation) > 0 then exit repeat
-                    end if
-                end try
-            end tell
-            
-            tell application "System Events"
-                try
-                    if exists process "Microsoft PowerPoint" then
-                        tell process "Microsoft PowerPoint"
-                            if exists window 1 then
-                                set frontWin to window 1
-                                if exists sheet 1 of frontWin then
-                                    set theSheet to sheet 1 of frontWin
-                                    repeat with btn in (every button of theSheet)
-                                        set btnName to name of btn
-                                        if btnName contains "읽기" or btnName contains "Read" or btnName contains "열기" or btnName contains "Open" or btnName contains "확인" or btnName contains "OK" then
-                                            click btn
-                                            exit repeat
-                                        end if
-                                    end repeat
-                                else
-                                    set winRole to value of attribute "AXSubrole" of frontWin
-                                    if winRole is "AXDialog" or (title of frontWin contains "PowerPoint" or title of frontWin is "") then
-                                        repeat with btn in (every button of frontWin)
-                                            set btnName to name of btn
-                                            if btnName contains "읽기" or btnName contains "Read" or btnName contains "열기" or btnName contains "Open" or btnName contains "확인" or btnName contains "OK" then
-                                                click btn
-                                                exit repeat
-                                            end if
-                                        end repeat
-                                    end if
-                                end if
-                            end if
-                        end tell
-                    end if
-                end try
-            end tell
-            delay 0.2
-        end repeat
-        delay 0.3
-        
-        tell application "Microsoft PowerPoint"
-            try
-                save active presentation in folderHFS as save as PNG
-                try
-                    close active presentation saving no
-                end try
-                return true
-            on error
-                try
-                    close active presentation saving no
-                end try
-                return false
-            end try
-        end tell
-        """
-        _ = runOsascriptWithTimeout(script: script, timeoutSeconds: 12.0)
+        _ = runPowerPointExport(pptxPath: pptxPath, outputPath: folderPath, saveAsFormat: "save as PNG")
         if let files = try? FileManager.default.contentsOfDirectory(atPath: folderPath),
            files.contains(where: { $0.lowercased().hasSuffix(".png") || $0.lowercased().hasSuffix(".jpg") }) {
             return true
