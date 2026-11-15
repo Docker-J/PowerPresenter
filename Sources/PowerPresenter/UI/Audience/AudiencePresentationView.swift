@@ -78,6 +78,14 @@ public final class AudiencePresentationView: NSView, AudienceRenderDelegate {
         let incomingLayer = isSlotAActive ? slotBLayer : slotALayer
         let outgoingLayer = isSlotAActive ? slotALayer : slotBLayer
 
+        // Clear any in-flight animations before swapping contents/media to prevent CoreAnimation race crashes
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        incomingLayer.removeAllAnimations()
+        outgoingLayer.removeAllAnimations()
+        incomingLayer.transform = CATransform3DIdentity
+        outgoingLayer.transform = CATransform3DIdentity
+
         // Load new slide content into incoming layer
         incomingLayer.contents = to.visualRepresentation
 
@@ -87,6 +95,7 @@ public final class AudiencePresentationView: NSView, AudienceRenderDelegate {
         } else {
             teardownMedia()
         }
+        CATransaction.commit()
 
         CATransaction.begin()
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeInEaseOut))
@@ -205,6 +214,7 @@ public final class AudiencePresentationView: NSView, AudienceRenderDelegate {
     }
 
     private func teardownMedia() {
+        playerLayer?.player = nil
         playerLayer?.removeFromSuperlayer()
         playerLayer = nil
     }

@@ -224,6 +224,7 @@ public final class ScreenCoordinator: ObservableObject {
                 defer: false,
                 screen: screen
             )
+            window.isReleasedWhenClosed = false
             configureBroadcastWindow(window, on: screen)
             view = AudiencePresentationView(frame: NSRect(origin: .zero, size: screen.frame.size))
             window.contentView = view
@@ -327,6 +328,7 @@ public final class ScreenCoordinator: ObservableObject {
                 defer: false,
                 screen: screen
             )
+            window.isReleasedWhenClosed = false
             configureBroadcastWindow(window, on: screen)
             let hosting = NSHostingView(rootView: StageDisplayView())
             window.contentView = hosting

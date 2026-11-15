@@ -37,10 +37,9 @@ public struct SlideThumbnailCard: View {
     }
 
     public var body: some View {
-        Button(action: onSelect) {
-            VStack(alignment: .leading, spacing: 5) {
-                ZStack {
-                    Color.black
+        VStack(alignment: .leading, spacing: 5) {
+            ZStack {
+                Color.black
 
                     if let img = slide.visualRepresentation {
                         Image(decorative: img, scale: 1.0)
@@ -162,36 +161,41 @@ public struct SlideThumbnailCard: View {
                     }
                     .padding(6)
                 }
-                .aspectRatio(16/9, contentMode: .fit)
-                .cornerRadius(6)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(borderColor, lineWidth: borderWidth)
-                )
+            .aspectRatio(16/9, contentMode: .fit)
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(borderColor, lineWidth: borderWidth)
+            )
+            .contentShape(Rectangle())
+            .onTapGesture {
+                onSelect()
+            }
 
-                HStack(spacing: 4) {
-                    Text(slide.title)
-                        .font(.caption)
-                        .fontWeight(isCurrent ? .bold : .regular)
-                        .lineLimit(1)
-                        .foregroundColor(isCurrent ? .primary : .secondary)
-
-                    Spacer()
-
-                    Menu {
-                        slideActionsMenuContent
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+            HStack(spacing: 4) {
+                Text(slide.title)
+                    .font(.caption)
+                    .fontWeight(isCurrent ? .bold : .regular)
+                    .lineLimit(1)
+                    .foregroundColor(isCurrent ? .primary : .secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        onSelect()
                     }
-                    .menuStyle(.borderlessButton)
-                    .frame(width: 18)
-                    .help("Slide Stage Preset Cue & Edit Options")
+
+                Menu {
+                    slideActionsMenuContent
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
+                .menuStyle(.borderlessButton)
+                .frame(width: 18)
+                .help("Slide Stage Preset Cue & Edit Options")
             }
         }
-        .buttonStyle(.plain)
         .contextMenu {
             slideActionsMenuContent
         }

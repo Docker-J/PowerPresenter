@@ -410,12 +410,20 @@ public struct OperatorDashboardView: View {
         .sheet(isPresented: $updater.showUpdateDialog) {
             UpdateDialogView()
         }
+        .onChange(of: engine.slides.count) { _, newCount in
+            selectedSlideIndices = selectedSlideIndices.filter { $0 >= 0 && $0 < newCount }
+            if let last = lastClickedIndex, last >= newCount {
+                lastClickedIndex = nil
+            }
+        }
     }
 
     private func handleSlideClick(slideIndex: Int) {
+        guard engine.slides.indices.contains(slideIndex) else { return }
         let flags = NSEvent.modifierFlags
         if flags.contains(.shift) {
-            let start = lastClickedIndex ?? engine.currentSlideIndex
+            let candidateStart = lastClickedIndex ?? engine.currentSlideIndex
+            let start = engine.slides.indices.contains(candidateStart) ? candidateStart : slideIndex
             let range = min(start, slideIndex)...max(start, slideIndex)
             selectedSlideIndices.formUnion(range)
             lastClickedIndex = slideIndex
@@ -445,7 +453,6 @@ struct StagePreviewCard: View {
 
     var body: some View {
         StageDisplayView(engine: engine)
-            .id(engine.activeStagePresetID)
             .aspectRatio(16/9, contentMode: .fit)
             .clipped()
     }

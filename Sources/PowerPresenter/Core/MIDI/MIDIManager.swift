@@ -162,30 +162,36 @@ public final class MIDIManager: ObservableObject {
     }
 
     private func sendRawBytes(_ bytes: [UInt8]) {
-        var buffer = [UInt8](repeating: 0, count: 1024)
-        buffer.withUnsafeMutableBytes { raw in
-            let packetList = raw.baseAddress!.assumingMemoryBound(to: MIDIPacketList.self)
-            var cur = MIDIPacketListInit(packetList)
-            cur = MIDIPacketListAdd(packetList, raw.count, cur, 0, bytes.count, bytes)
+        guard !bytes.isEmpty else { return }
+        let bufferSize = 1024
+        let rawPtr = UnsafeMutableRawPointer.allocate(
+            byteCount: bufferSize,
+            alignment: MemoryLayout<MIDIPacketList>.alignment
+        )
+        defer { rawPtr.deallocate() }
+        rawPtr.initializeMemory(as: UInt8.self, repeating: 0, count: bufferSize)
 
-            // 1. Always send to Virtual Source (local DAWs listening to PowerPresenter MIDI Out)
-            if virtualSourceEndpoint != 0 {
-                MIDIReceived(virtualSourceEndpoint, packetList)
-            }
+        let packetList = rawPtr.assumingMemoryBound(to: MIDIPacketList.self)
+        var cur = MIDIPacketListInit(packetList)
+        cur = MIDIPacketListAdd(packetList, bufferSize, cur, 0, bytes.count, bytes)
 
-            // 2. Send to target external destinations
-            if outputPort != 0 {
-                if selectedDestinationIndex >= 0 && selectedDestinationIndex < availableDestinations.count {
-                    let dest = availableDestinations[selectedDestinationIndex].endpointRef
-                    if dest != 0 {
-                        MIDISend(outputPort, dest, packetList)
-                    }
-                } else {
-                    // Broadcast to all detected hardware / network / IAC destinations
-                    for destInfo in availableDestinations {
-                        if destInfo.endpointRef != 0 {
-                            MIDISend(outputPort, destInfo.endpointRef, packetList)
-                        }
+        // 1. Always send to Virtual Source (local DAWs listening to PowerPresenter MIDI Out)
+        if virtualSourceEndpoint != 0 {
+            MIDIReceived(virtualSourceEndpoint, packetList)
+        }
+
+        // 2. Send to target external destinations
+        if outputPort != 0 {
+            if selectedDestinationIndex >= 0 && selectedDestinationIndex < availableDestinations.count {
+                let dest = availableDestinations[selectedDestinationIndex].endpointRef
+                if dest != 0 {
+                    MIDISend(outputPort, dest, packetList)
+                }
+            } else {
+                // Broadcast to all detected hardware / network / IAC destinations
+                for destInfo in availableDestinations {
+                    if destInfo.endpointRef != 0 {
+                        MIDISend(outputPort, destInfo.endpointRef, packetList)
                     }
                 }
             }

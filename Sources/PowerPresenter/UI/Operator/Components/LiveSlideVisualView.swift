@@ -20,6 +20,10 @@ public struct LivePlayerLayerView: NSViewRepresentable {
     public func updateNSView(_ nsView: PlayerLayerNSView, context: Context) {
         nsView.configure(player: player, videoGravity: videoGravity)
     }
+
+    public static func dismantleNSView(_ nsView: PlayerLayerNSView, coordinator: ()) {
+        nsView.configure(player: nil, videoGravity: .resizeAspect)
+    }
 }
 
 public final class PlayerLayerNSView: NSView {
@@ -41,6 +45,7 @@ public final class PlayerLayerNSView: NSView {
 
     public func configure(player: AVPlayer?, videoGravity: AVLayerVideoGravity) {
         if playerLayer?.player !== player {
+            playerLayer?.player = nil
             playerLayer?.removeFromSuperlayer()
             playerLayer = nil
 

@@ -201,6 +201,7 @@ public final class PresentationEngine: ObservableObject {
             timeObserverToken = nil
         }
         activePlayer?.pause()
+        activePlayer?.replaceCurrentItem(with: nil)
         activePlayer = nil
         isMediaPlaying = false
         mediaCurrentTime = 0.0
@@ -246,6 +247,7 @@ public final class PresentationEngine: ObservableObject {
 
     public func applyStagePreset(id: UUID) {
         guard let found = stagePresets.first(where: { $0.id == id }) else { return }
+        guard activeStagePresetID != found.id else { return }
         isUpdatingPresetInternally = true
         activeStagePresetID = found.id
         stageLayout = found.config
