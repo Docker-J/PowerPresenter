@@ -60,6 +60,27 @@ public final class ScreenCoordinator: ObservableObject {
             }
         }
 
+        // Sync visibility flags when user closes floating auxiliary rehearsal windows via the titlebar X button
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let closedWindow = notification.object as? NSWindow else { return }
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                if self.auxiliaryAudienceWindow?.window === closedWindow {
+                    if !self.audienceWindows.values.contains(where: { $0.window.isVisible }) {
+                        self.isAudienceWindowVisible = false
+                    }
+                } else if self.auxiliaryStageWindow === closedWindow {
+                    if !self.stageWindows.values.contains(where: { $0.isVisible }) {
+                        self.isStageWindowVisible = false
+                    }
+                }
+            }
+        }
+
         // Safety Escape key handler: pressing ESC closes active fullscreen outputs so operator is never locked out
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == 53 { // ESC key
@@ -182,7 +203,10 @@ public final class ScreenCoordinator: ObservableObject {
     // MARK: - Audience Output (Multi-Display Broadcast)
 
     public func toggleAudienceWindow() {
-        if isAudienceWindowVisible {
+        refreshScreens(initialLaunch: false)
+        let anyActuallyVisible = audienceWindows.values.contains { $0.window.isVisible } || (auxiliaryAudienceWindow?.window.isVisible == true)
+
+        if isAudienceWindowVisible && anyActuallyVisible {
             for (_, entry) in audienceWindows {
                 entry.window.orderOut(nil)
             }
@@ -198,7 +222,7 @@ public final class ScreenCoordinator: ObservableObject {
             }
             isAudienceWindowVisible = true
         } else if connectedScreens.count > 1 {
-            assignRole(.audience, forScreenIndex: 1)
+            screenAssignments[1] = .audience
             attachAudienceToScreen(connectedScreens[1], screenIndex: 1)
             isAudienceWindowVisible = true
         } else if let first = connectedScreens.first {
@@ -214,25 +238,27 @@ public final class ScreenCoordinator: ObservableObject {
             window = existing.window
             view = existing.view
             window.styleMask = [.borderless]
-            window.setFrame(screen.frame, display: true)
             configureBroadcastWindow(window, on: screen)
+            window.setFrame(screen.frame, display: true)
         } else {
+            // Pass screen: nil so macOS treats screen.frame strictly as global coordinates (prevents double-offset offscreen placement)
             window = NSWindow(
                 contentRect: screen.frame,
                 styleMask: [.borderless],
                 backing: .buffered,
                 defer: false,
-                screen: screen
+                screen: nil
             )
             window.isReleasedWhenClosed = false
             configureBroadcastWindow(window, on: screen)
+            window.setFrame(screen.frame, display: true)
             view = AudiencePresentationView(frame: NSRect(origin: .zero, size: screen.frame.size))
             window.contentView = view
             audienceWindows[screenIndex] = (window, view)
         }
 
         view.engineDidReloadDeck()
-        window.orderFront(nil)
+        window.orderFrontRegardless()
         isAudienceWindowVisible = true
     }
 
@@ -271,17 +297,19 @@ public final class ScreenCoordinator: ObservableObject {
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered,
             defer: false,
-            screen: screen
+            screen: nil
         )
         window.title = "Audience Display (Live Output)"
         window.isReleasedWhenClosed = false
         window.backgroundColor = .black
         window.level = .floating
+        window.setFrame(windowRect, display: true)
 
         let view = AudiencePresentationView(frame: NSRect(origin: .zero, size: windowRect.size))
         window.contentView = view
         self.auxiliaryAudienceWindow = (window, view)
 
+        view.engineDidReloadDeck()
         window.makeKeyAndOrderFront(nil)
         isAudienceWindowVisible = true
     }
@@ -289,7 +317,10 @@ public final class ScreenCoordinator: ObservableObject {
     // MARK: - Stage View Output (Multi-Display Confidence Monitor)
 
     public func toggleStageWindow() {
-        if isStageWindowVisible {
+        refreshScreens(initialLaunch: false)
+        let anyActuallyVisible = stageWindows.values.contains { $0.isVisible } || (auxiliaryStageWindow?.isVisible == true)
+
+        if isStageWindowVisible && anyActuallyVisible {
             for (_, win) in stageWindows {
                 win.orderOut(nil)
             }
@@ -305,7 +336,7 @@ public final class ScreenCoordinator: ObservableObject {
             }
             isStageWindowVisible = true
         } else if connectedScreens.count > 2 {
-            assignRole(.stage, forScreenIndex: 2)
+            screenAssignments[2] = .stage
             attachStageToScreen(connectedScreens[2], screenIndex: 2)
             isStageWindowVisible = true
         } else if let first = connectedScreens.first {
@@ -318,24 +349,27 @@ public final class ScreenCoordinator: ObservableObject {
         if let existing = stageWindows[screenIndex] {
             window = existing
             window.styleMask = [.borderless]
-            window.setFrame(screen.frame, display: true)
             configureBroadcastWindow(window, on: screen)
+            window.setFrame(screen.frame, display: true)
         } else {
+            // Pass screen: nil so macOS treats screen.frame strictly as global coordinates
             window = NSWindow(
                 contentRect: screen.frame,
                 styleMask: [.borderless],
                 backing: .buffered,
                 defer: false,
-                screen: screen
+                screen: nil
             )
             window.isReleasedWhenClosed = false
             configureBroadcastWindow(window, on: screen)
+            window.setFrame(screen.frame, display: true)
             let hosting = NSHostingView(rootView: StageDisplayView())
             window.contentView = hosting
             stageWindows[screenIndex] = window
         }
 
-        window.orderFront(nil)
+        window.contentView?.layoutSubtreeIfNeeded()
+        window.orderFrontRegardless()
         isStageWindowVisible = true
     }
 
@@ -373,11 +407,12 @@ public final class ScreenCoordinator: ObservableObject {
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered,
             defer: false,
-            screen: screen
+            screen: nil
         )
         window.title = "Stage Display (Confidence Monitor)"
         window.isReleasedWhenClosed = false
         window.backgroundColor = .black
+        window.setFrame(windowRect, display: true)
 
         let hosting = NSHostingView(rootView: StageDisplayView())
         window.contentView = hosting
