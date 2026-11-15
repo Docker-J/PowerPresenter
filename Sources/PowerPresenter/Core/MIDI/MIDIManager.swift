@@ -29,17 +29,31 @@ public final class MIDIManager: ObservableObject {
         setupMIDI()
     }
 
-    private func setupMIDI() {
-        // Create MIDI Client with Notification Callback for hot-plugging devices
-        var client = MIDIClientRef()
-        let status = MIDIClientCreateWithBlock("PowerPresenterMIDI" as CFString, &client) { [weak self] notificationPtr in
-            let notif = notificationPtr.pointee
-            if notif.messageID == .msgSetupChanged || notif.messageID == .msgObjectAdded || notif.messageID == .msgObjectRemoved {
-                Task { @MainActor [weak self] in
-                    self?.refreshDestinations()
+    nonisolated private static func makeNotifyBlock(manager: MIDIManager) -> MIDINotifyBlock {
+        return { [weak manager] notificationPtr in
+            let messageID = notificationPtr.pointee.messageID
+            if messageID == .msgSetupChanged || messageID == .msgObjectAdded || messageID == .msgObjectRemoved {
+                Task { @MainActor [weak manager] in
+                    manager?.refreshDestinations()
+                    manager?.connectAllSourcesToInputPort()
                 }
             }
         }
+    }
+
+    nonisolated private static func makeInputPortBlock(manager: MIDIManager) -> MIDIReadBlock {
+        return { [weak manager] packetListPtr, _ in
+            manager?.handleIncomingMIDIPacketList(packetListPtr)
+        }
+    }
+
+    private func setupMIDI() {
+        // Create MIDI Client with Notification Callback for hot-plugging devices.
+        // Note: Blocks are constructed in `nonisolated static` helpers so Swift 6 does not
+        // infer `@MainActor` executor assertions when CoreMIDI invokes them on its C thread.
+        var client = MIDIClientRef()
+        let notifyBlock = Self.makeNotifyBlock(manager: self)
+        let status = MIDIClientCreateWithBlock("PowerPresenterMIDI" as CFString, &client, notifyBlock)
 
         guard status == noErr else {
             print("⚠️ Failed to create MIDI Client: status \(status)")
@@ -68,9 +82,8 @@ public final class MIDIManager: ObservableObject {
 
         // Create Input Port for optional slide control from external MIDI
         var inPort = MIDIPortRef()
-        let inStatus = MIDIInputPortCreateWithBlock(client, "PowerPresenter Input Port" as CFString, &inPort) { [weak self] packetListPtr, srcConnRefCon in
-            self?.handleIncomingMIDIPacketList(packetListPtr)
-        }
+        let readBlock = Self.makeInputPortBlock(manager: self)
+        let inStatus = MIDIInputPortCreateWithBlock(client, "PowerPresenter Input Port" as CFString, &inPort, readBlock)
         if inStatus == noErr {
             self.inputPort = inPort
             connectAllSourcesToInputPort()
@@ -144,12 +157,12 @@ public final class MIDIManager: ObservableObject {
 
         // Automatically dispatch Note Off after 100ms for clean action trigger in DAWs / lighting desks
         if autoNoteOffDelay > 0 {
-            DispatchQueue.global().asyncAfter(deadline: .now() + autoNoteOffDelay) { [weak self] in
-                let statusOff = UInt8(0x80 | ch)
-                let bytesOff: [UInt8] = [statusOff, note & 0x7F, 0]
-                Task { @MainActor [weak self] in
-                    self?.sendRawBytes(bytesOff)
-                }
+            let statusOff = UInt8(0x80 | ch)
+            let bytesOff: [UInt8] = [statusOff, note & 0x7F, 0]
+            let delayNs = UInt64(autoNoteOffDelay * 1_000_000_000)
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: delayNs)
+                self?.sendRawBytes(bytesOff)
             }
         }
     }
