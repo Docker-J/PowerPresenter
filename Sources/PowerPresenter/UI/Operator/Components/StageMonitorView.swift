@@ -79,31 +79,9 @@ public struct StageMonitorView: View {
 
             // Media Transport Bar for Video/Audio Slides
             if let slide = slide, slide.hasMedia && engine.activePlayer != nil {
-                HStack(spacing: 8) {
-                    Button(action: {
-                        engine.toggleMediaPlayback()
-                    }) {
-                        Image(systemName: engine.isMediaPlaying ? "pause.fill" : "play.fill")
-                            .font(.caption.bold())
-                            .foregroundColor(.primary)
-                    }
-                    .buttonStyle(.plain)
-
-                    Slider(
-                        value: Binding(
-                            get: { engine.mediaCurrentTime },
-                            set: { engine.seekMedia(to: $0) }
-                        ),
-                        in: 0...max(1.0, engine.mediaDuration)
-                    )
-                    .controlSize(.mini)
-
-                    Text(formattedMediaTime(current: engine.mediaCurrentTime, total: engine.mediaDuration))
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 4)
-                .padding(.top, 2)
+                MediaTransportBar()
+                    .padding(.horizontal, 4)
+                    .padding(.top, 2)
             }
 
             if let subtitle = subtitle {
@@ -112,6 +90,39 @@ public struct StageMonitorView: View {
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
+        }
+    }
+}
+
+private struct MediaTransportBar: View {
+    @ObservedObject private var mediaState = PresentationEngine.shared.mediaState
+
+    var body: some View {
+        let safeDuration = max(1.0, mediaState.duration.isFinite ? mediaState.duration : 1.0)
+        let safeCurrent = min(max(0.0, mediaState.currentTime.isFinite ? mediaState.currentTime : 0.0), safeDuration)
+
+        HStack(spacing: 8) {
+            Button(action: {
+                PresentationEngine.shared.toggleMediaPlayback()
+            }) {
+                Image(systemName: mediaState.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.caption.bold())
+                    .foregroundColor(.primary)
+            }
+            .buttonStyle(.plain)
+
+            Slider(
+                value: Binding(
+                    get: { safeCurrent },
+                    set: { PresentationEngine.shared.seekMedia(to: $0) }
+                ),
+                in: 0...safeDuration
+            )
+            .controlSize(.mini)
+
+            Text(formattedMediaTime(current: safeCurrent, total: max(0.0, mediaState.duration)))
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(.secondary)
         }
     }
 

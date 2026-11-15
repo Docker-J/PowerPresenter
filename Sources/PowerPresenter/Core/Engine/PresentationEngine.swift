@@ -3,6 +3,15 @@ import Combine
 import CoreGraphics
 import AVFoundation
 
+/// Isolated observable state for high-frequency media playback updates (e.g. 10Hz time observer),
+/// preventing full-grid SwiftUI re-evaluations in `OperatorDashboardView` on every time tick.
+@MainActor
+public final class MediaPlaybackState: ObservableObject {
+    @Published public var isPlaying: Bool = false
+    @Published public var currentTime: Double = 0.0
+    @Published public var duration: Double = 0.0
+}
+
 @MainActor
 public final class PresentationEngine: ObservableObject {
     public static let shared = PresentationEngine()
@@ -17,10 +26,10 @@ public final class PresentationEngine: ObservableObject {
 
     // Media Playback State
     @Published public private(set) var activePlayer: AVPlayer?
-    @Published public private(set) var isMediaPlaying: Bool = false
-    @Published public private(set) var mediaCurrentTime: Double = 0.0
-    @Published public private(set) var mediaDuration: Double = 0.0
+    public let mediaState = MediaPlaybackState()
     private var timeObserverToken: Any?
+    private var mediaDurationTask: Task<Void, Never>?
+    private var mediaSessionID = UUID()
 
     // Stage Display / Confidence Monitor State & Presets
     @Published public var stageAlertMessage: String = ""
@@ -84,8 +93,12 @@ public final class PresentationEngine: ObservableObject {
     // MARK: - Deck Loading & Navigation
 
     public func loadDeck(title: String, slides: [SlideItem]) {
+        var normalizedSlides = slides
+        for i in normalizedSlides.indices {
+            normalizedSlides[i].index = i
+        }
         self.deckTitle = title
-        self.slides = slides
+        self.slides = normalizedSlides
         self.currentSlideIndex = 0
         self.isBlackoutActive = false
         self.isMediaCleared = false
@@ -159,6 +172,9 @@ public final class PresentationEngine: ObservableObject {
             return
         }
 
+        let sessionID = UUID()
+        self.mediaSessionID = sessionID
+
         let asset = AVURLAsset(url: mediaURL)
         let playerItem = AVPlayerItem(asset: asset)
         let player = AVPlayer(playerItem: playerItem)
@@ -166,15 +182,18 @@ public final class PresentationEngine: ObservableObject {
         AudioOutputManager.shared.configurePlayer(player)
 
         self.activePlayer = player
-        self.mediaDuration = 0.0
-        self.mediaCurrentTime = 0.0
+        self.mediaState.duration = 0.0
+        self.mediaState.currentTime = 0.0
 
-        // Async load duration
-        Task { [weak self] in
+        // Async load duration (cancelled if slide changes before completion)
+        mediaDurationTask = Task { [weak self] in
             if let duration = try? await asset.load(.duration) {
+                guard !Task.isCancelled else { return }
                 let seconds = CMTimeGetSeconds(duration)
-                if seconds.isFinite && !seconds.isNaN {
-                    self?.mediaDuration = seconds
+                if seconds.isFinite && !seconds.isNaN && seconds >= 0 {
+                    if let self, self.mediaSessionID == sessionID {
+                        self.mediaState.duration = seconds
+                    }
                 }
             }
         }
@@ -183,19 +202,24 @@ public final class PresentationEngine: ObservableObject {
         let interval = CMTime(seconds: 0.1, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
         timeObserverToken = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             let secs = CMTimeGetSeconds(time)
-            if secs.isFinite && !secs.isNaN {
+            if secs.isFinite && !secs.isNaN && secs >= 0 {
                 Task { @MainActor [weak self] in
-                    self?.mediaCurrentTime = secs
+                    guard let self, self.mediaSessionID == sessionID else { return }
+                    self.mediaState.currentTime = secs
                 }
             }
         }
 
         // Start playback automatically on slide entry
         player.play()
-        self.isMediaPlaying = true
+        self.mediaState.isPlaying = true
     }
 
     private func cleanupCurrentMedia() {
+        mediaDurationTask?.cancel()
+        mediaDurationTask = nil
+        mediaSessionID = UUID()
+
         if let token = timeObserverToken, let player = activePlayer {
             player.removeTimeObserver(token)
             timeObserverToken = nil
@@ -203,39 +227,40 @@ public final class PresentationEngine: ObservableObject {
         activePlayer?.pause()
         activePlayer?.replaceCurrentItem(with: nil)
         activePlayer = nil
-        isMediaPlaying = false
-        mediaCurrentTime = 0.0
-        mediaDuration = 0.0
+        mediaState.isPlaying = false
+        mediaState.currentTime = 0.0
+        mediaState.duration = 0.0
     }
 
     public func toggleMediaPlayback() {
         guard let player = activePlayer else { return }
-        if isMediaPlaying {
+        if mediaState.isPlaying {
             player.pause()
-            isMediaPlaying = false
+            mediaState.isPlaying = false
         } else {
             player.play()
-            isMediaPlaying = true
+            mediaState.isPlaying = true
         }
     }
 
     public func playMedia() {
         guard let player = activePlayer else { return }
         player.play()
-        isMediaPlaying = true
+        mediaState.isPlaying = true
     }
 
     public func pauseMedia() {
         guard let player = activePlayer else { return }
         player.pause()
-        isMediaPlaying = false
+        mediaState.isPlaying = false
     }
 
     public func seekMedia(to seconds: Double) {
         guard let player = activePlayer else { return }
-        let time = CMTime(seconds: seconds, preferredTimescale: 600)
+        let clamped = max(0.0, seconds.isFinite && !seconds.isNaN ? seconds : 0.0)
+        let time = CMTime(seconds: clamped, preferredTimescale: 600)
         player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
-        mediaCurrentTime = seconds
+        mediaState.currentTime = clamped
     }
 
     // MARK: - Stage Layout Preset Management & Per-Slide Cue Assignment
@@ -457,7 +482,7 @@ public final class PresentationEngine: ObservableObject {
         isBlackoutActive = active
         if active {
             activePlayer?.pause()
-        } else if isMediaPlaying {
+        } else if mediaState.isPlaying {
             activePlayer?.play()
         }
         audienceRenderer?.setBlackout(active)

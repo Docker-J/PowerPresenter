@@ -21,21 +21,23 @@ public struct StageDisplayView: View {
             GeometryReader { geo in
                 let w = geo.size.width
                 let h = geo.size.height
-                let elements = engine.stageLayout.elements.isEmpty
-                    ? StageLayoutConfig.defaultElements(for: engine.stageLayout.style, colorTheme: engine.stageLayout.colorTheme)
-                    : engine.stageLayout.elements
+                if w.isFinite && h.isFinite && w > 0 && h > 0 {
+                    let elements = engine.stageLayout.elements.isEmpty
+                        ? StageLayoutConfig.defaultElements(for: engine.stageLayout.style, colorTheme: engine.stageLayout.colorTheme)
+                        : engine.stageLayout.elements
 
-                ForEach(elements) { element in
-                    if element.isVisible {
-                        stageElementView(element, width: w, height: h)
-                            .frame(
-                                width: max(16, element.rect.width * w),
-                                height: max(16, element.rect.height * h)
-                            )
-                            .position(
-                                x: (element.rect.x + element.rect.width / 2.0) * w,
-                                y: (element.rect.y + element.rect.height / 2.0) * h
-                            )
+                    ForEach(elements) { element in
+                        if element.isVisible {
+                            stageElementView(element, width: w, height: h)
+                                .frame(
+                                    width: max(16, element.rect.width * w),
+                                    height: max(16, element.rect.height * h)
+                                )
+                                .position(
+                                    x: (element.rect.x + element.rect.width / 2.0) * w,
+                                    y: (element.rect.y + element.rect.height / 2.0) * h
+                                )
+                        }
                     }
                 }
             }

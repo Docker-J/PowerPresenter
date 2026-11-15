@@ -113,26 +113,8 @@ public struct LiveSlideVisualView: View {
                     LivePlayerLayerView(player: player)
 
                     if showMediaBadge {
-                        HStack(spacing: 5) {
-                            Circle()
-                                .fill(engine.isMediaPlaying ? Color.green : Color.orange)
-                                .frame(width: 6, height: 6)
-                            Text(engine.isMediaPlaying ? "LIVE VIDEO" : "PAUSED")
-                                .font(.system(size: 9, weight: .heavy, design: .monospaced))
-                                .foregroundColor(.white)
-
-                            if engine.mediaDuration > 0 {
-                                let remaining = max(0, engine.mediaDuration - engine.mediaCurrentTime)
-                                Text("• \(formattedTime(remaining)) left")
-                                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                                    .foregroundColor(.white.opacity(0.85))
-                            }
-                        }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Color.black.opacity(0.75))
-                        .cornerRadius(4)
-                        .padding(6)
+                        LiveMediaStatusBadge(isAudio: false)
+                            .padding(6)
                     }
                 }
             } else if isCurrent, let slide = slide, slide.isAudioMedia, let _ = engine.activePlayer {
@@ -144,22 +126,7 @@ public struct LiveSlideVisualView: View {
                             .aspectRatio(16/9, contentMode: .fit)
                     }
                     if showMediaBadge {
-                        HStack(spacing: 5) {
-                            Image(systemName: "waveform")
-                                .font(.system(size: 10))
-                            Text(engine.isMediaPlaying ? "AUDIO PLAYING" : "AUDIO PAUSED")
-                                .font(.system(size: 9, weight: .heavy, design: .monospaced))
-                            if engine.mediaDuration > 0 {
-                                let remaining = max(0, engine.mediaDuration - engine.mediaCurrentTime)
-                                Text("• \(formattedTime(remaining)) left")
-                                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                            }
-                        }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Color.blue.opacity(0.85))
-                        .foregroundColor(.white)
-                        .cornerRadius(4)
+                        LiveMediaStatusBadge(isAudio: true)
                     }
                 }
             } else if let slide = slide, let img = slide.visualRepresentation {
@@ -178,6 +145,41 @@ public struct LiveSlideVisualView: View {
             }
         }
         .aspectRatio(16/9, contentMode: .fit)
+    }
+}
+
+private struct LiveMediaStatusBadge: View {
+    let isAudio: Bool
+    @ObservedObject private var mediaState = PresentationEngine.shared.mediaState
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if isAudio {
+                Image(systemName: "waveform")
+                    .font(.system(size: 10))
+                Text(mediaState.isPlaying ? "AUDIO PLAYING" : "AUDIO PAUSED")
+                    .font(.system(size: 9, weight: .heavy, design: .monospaced))
+            } else {
+                Circle()
+                    .fill(mediaState.isPlaying ? Color.green : Color.orange)
+                    .frame(width: 6, height: 6)
+                Text(mediaState.isPlaying ? "LIVE VIDEO" : "PAUSED")
+                    .font(.system(size: 9, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.white)
+            }
+
+            if mediaState.duration > 0 {
+                let remaining = max(0, mediaState.duration - mediaState.currentTime)
+                Text("• \(formattedTime(remaining)) left")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white.opacity(isAudio ? 1.0 : 0.85))
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(isAudio ? Color.blue.opacity(0.85) : Color.black.opacity(0.75))
+        .foregroundColor(.white)
+        .cornerRadius(4)
     }
 
     private func formattedTime(_ seconds: Double) -> String {
