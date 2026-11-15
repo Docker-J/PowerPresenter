@@ -23,7 +23,8 @@ ENTITLEMENTS_FILE="${DIR}/.build/tmp/PowerPresenter.entitlements"
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 
 # Copy compiled executable
-cp "${DIR}/.build/out/Products/Release/PowerPresenter" "${MACOS_DIR}/PowerPresenter"
+BIN_PATH=$(TMPDIR="${DIR}/.build/tmp" SWIFT_MODULE_CACHE_PATH="${DIR}/.build/cache" CLANG_MODULE_CACHE_PATH="${DIR}/.build/cache" DEVELOPER_DIR="${DEV_DIR}" swift build --disable-sandbox -c release --show-bin-path)
+cp "${BIN_PATH}/PowerPresenter" "${MACOS_DIR}/PowerPresenter"
 chmod +x "${MACOS_DIR}/PowerPresenter"
 
 # Write Info.plist with Apple Events permissions
