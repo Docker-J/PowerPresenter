@@ -36,6 +36,10 @@ public final class ScreenCoordinator: ObservableObject {
     private var auxiliaryAudienceWindow: (window: NSWindow, view: AudiencePresentationView)?
     private var auxiliaryStageWindow: NSWindow?
 
+    // Persistent display role assignments across launches and cable reconnects
+    private let savedRolesStorageKey = "PowerPresenter.DisplayRoleAssignments.v1"
+    private var savedRolesByKey: [String: String] = [:]
+
     public var audienceScreenCount: Int {
         screenAssignments.values.filter { $0 == .audience }.count
     }
@@ -45,6 +49,9 @@ public final class ScreenCoordinator: ObservableObject {
     }
 
     private init() {
+        // Load persisted display roles before initial screen discovery
+        self.savedRolesByKey = UserDefaults.standard.dictionary(forKey: savedRolesStorageKey) as? [String: String] ?? [:]
+
         // Register ScreenCoordinator as the primary composite Audience renderer
         PresentationEngine.shared.audienceRenderer = self
 
@@ -102,7 +109,7 @@ public final class ScreenCoordinator: ObservableObject {
             let height = Int(screen.frame.height)
             let name = screen.localizedName.isEmpty ? "Display \(index + 1)" : screen.localizedName
             let assigned = screenAssignments[index] ?? .none
-            let screenNumber = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? UInt32(index)
+            let screenNumber = displayID(for: screen, fallbackIndex: index)
             let isBuiltIn = CGDisplayIsBuiltin(screenNumber) != 0 || index == 0
 
             return DisplayDescriptor(
@@ -116,42 +123,134 @@ public final class ScreenCoordinator: ObservableObject {
         }
     }
 
+    private func displayID(for screen: NSScreen, fallbackIndex: Int) -> CGDirectDisplayID {
+        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? UInt32(fallbackIndex)
+    }
+
+    private func edidSignature(for displayID: CGDirectDisplayID) -> String {
+        let vendor = CGDisplayVendorNumber(displayID)
+        let model = CGDisplayModelNumber(displayID)
+        let serial = CGDisplaySerialNumber(displayID)
+        return "\(vendor)-\(model)-\(serial)"
+    }
+
+    private func uniqueIdentifiers(for screens: [NSScreen]) -> (names: Set<String>, edids: Set<String>) {
+        var nameCounts: [String: Int] = [:]
+        var edidCounts: [String: Int] = [:]
+
+        for (index, screen) in screens.enumerated() {
+            if !screen.localizedName.isEmpty {
+                nameCounts[screen.localizedName, default: 0] += 1
+            }
+            let edid = edidSignature(for: displayID(for: screen, fallbackIndex: index))
+            edidCounts[edid, default: 0] += 1
+        }
+
+        let uniqueNames = Set(nameCounts.filter { $0.value == 1 }.keys)
+        let uniqueEDIDs = Set(edidCounts.filter { $0.value == 1 }.keys)
+        return (uniqueNames, uniqueEDIDs)
+    }
+
+    private func lookupKeys(
+        for screen: NSScreen,
+        index: Int,
+        uniqueNames: Set<String>,
+        uniqueEDIDs: Set<String>
+    ) -> [String] {
+        let id = displayID(for: screen, fallbackIndex: index)
+        let serial = CGDisplaySerialNumber(id)
+        let edid = edidSignature(for: id)
+
+        var keys: [String] = ["hw:\(edid)-\(id)"]
+        if serial != 0 || uniqueEDIDs.contains(edid) {
+            keys.append("edid:\(edid)")
+        }
+        if !screen.localizedName.isEmpty && uniqueNames.contains(screen.localizedName) {
+            keys.append("name:\(screen.localizedName)")
+        }
+        keys.append("id:\(id)")
+        return keys
+    }
+
+    private func saveCurrentDisplayRoles() {
+        let unique = uniqueIdentifiers(for: connectedScreens)
+        for (idx, screen) in connectedScreens.enumerated() {
+            let role = screenAssignments[idx] ?? .none
+            for key in lookupKeys(for: screen, index: idx, uniqueNames: unique.names, uniqueEDIDs: unique.edids) {
+                savedRolesByKey[key] = role.rawValue
+            }
+        }
+        UserDefaults.standard.set(savedRolesByKey, forKey: savedRolesStorageKey)
+    }
+
+    private func savedRole(
+        for screen: NSScreen,
+        index: Int,
+        uniqueNames: Set<String>,
+        uniqueEDIDs: Set<String>
+    ) -> MonitorRole? {
+        for key in lookupKeys(for: screen, index: index, uniqueNames: uniqueNames, uniqueEDIDs: uniqueEDIDs) {
+            if let raw = savedRolesByKey[key], let role = MonitorRole(rawValue: raw) {
+                return role
+            }
+        }
+        return nil
+    }
+
     public func refreshScreens(initialLaunch: Bool = false) {
         self.connectedScreens = NSScreen.screens
+        let unique = uniqueIdentifiers(for: connectedScreens)
 
-        if screenAssignments.isEmpty {
+        var restoredAssignments: [Int: MonitorRole] = [:]
+        var matchedAnySaved = false
+        for (idx, screen) in connectedScreens.enumerated() {
+            if let role = savedRole(for: screen, index: idx, uniqueNames: unique.names, uniqueEDIDs: unique.edids) {
+                restoredAssignments[idx] = role
+                matchedAnySaved = true
+            } else {
+                restoredAssignments[idx] = MonitorRole.none
+            }
+        }
+
+        if matchedAnySaved {
+            screenAssignments = restoredAssignments
+        } else if screenAssignments.isEmpty {
             if connectedScreens.count == 1 {
                 screenAssignments[0] = MonitorRole.none
             } else if connectedScreens.count == 2 {
                 screenAssignments[0] = MonitorRole.none
                 screenAssignments[1] = .audience
-                if !initialLaunch {
-                    attachAudienceToScreen(connectedScreens[1], screenIndex: 1)
-                }
             } else if connectedScreens.count >= 3 {
                 screenAssignments[0] = MonitorRole.none
                 screenAssignments[1] = .audience
                 screenAssignments[2] = .stage
-                if !initialLaunch {
-                    attachAudienceToScreen(connectedScreens[1], screenIndex: 1)
-                    attachStageToScreen(connectedScreens[2], screenIndex: 2)
-                }
             }
         } else {
-            // Remove disconnected screen assignments and destroy their detached windows
             let disconnectedIndices = screenAssignments.keys.filter { $0 >= connectedScreens.count }
             for idx in disconnectedIndices {
-                detachAudienceFromScreen(screenIndex: idx)
-                detachStageFromScreen(screenIndex: idx)
                 screenAssignments.removeValue(forKey: idx)
+            }
+        }
+
+        if !initialLaunch {
+            let staleAudienceIndices = audienceWindows.keys.filter {
+                $0 >= connectedScreens.count || screenAssignments[$0] != .audience
+            }
+            for idx in staleAudienceIndices {
+                detachAudienceFromScreen(screenIndex: idx)
+            }
+
+            let staleStageIndices = stageWindows.keys.filter {
+                $0 >= connectedScreens.count || screenAssignments[$0] != .stage
+            }
+            for idx in staleStageIndices {
+                detachStageFromScreen(screenIndex: idx)
             }
 
             // Sync layout for currently active screens
-            for (index, role) in screenAssignments {
-                if index < connectedScreens.count {
-                    if (role == .audience && isAudienceWindowVisible) || (role == .stage && isStageWindowVisible) {
-                        applyRole(role, forScreenIndex: index)
-                    }
+            for (index, role) in screenAssignments where index < connectedScreens.count {
+                if (role == .audience && isAudienceWindowVisible) || (role == .stage && isStageWindowVisible) {
+                    applyRole(role, forScreenIndex: index)
                 }
             }
         }
@@ -163,6 +262,7 @@ public final class ScreenCoordinator: ObservableObject {
         guard index < connectedScreens.count else { return }
         screenAssignments[index] = role
         applyRole(role, forScreenIndex: index)
+        saveCurrentDisplayRoles()
     }
 
     private func applyRole(_ role: MonitorRole, forScreenIndex index: Int) {
@@ -223,6 +323,7 @@ public final class ScreenCoordinator: ObservableObject {
             isAudienceWindowVisible = true
         } else if connectedScreens.count > 1 {
             screenAssignments[1] = .audience
+            saveCurrentDisplayRoles()
             attachAudienceToScreen(connectedScreens[1], screenIndex: 1)
             isAudienceWindowVisible = true
         } else if let first = connectedScreens.first {
@@ -337,6 +438,7 @@ public final class ScreenCoordinator: ObservableObject {
             isStageWindowVisible = true
         } else if connectedScreens.count > 2 {
             screenAssignments[2] = .stage
+            saveCurrentDisplayRoles()
             attachStageToScreen(connectedScreens[2], screenIndex: 2)
             isStageWindowVisible = true
         } else if let first = connectedScreens.first {

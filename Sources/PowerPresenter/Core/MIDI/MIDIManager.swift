@@ -12,13 +12,40 @@ public struct MIDIDestinationInfo: Identifiable, Hashable {
 public final class MIDIManager: ObservableObject {
     public static let shared = MIDIManager()
 
-    @Published public var isMidiOutEnabled: Bool = true
-    @Published public var isMidiInEnabled: Bool = false
+    @Published public var isMidiOutEnabled: Bool = true {
+        didSet {
+            guard !isLoadingSettings else { return }
+            UserDefaults.standard.set(isMidiOutEnabled, forKey: midiOutEnabledKey)
+        }
+    }
+    @Published public var isMidiInEnabled: Bool = false {
+        didSet {
+            guard !isLoadingSettings else { return }
+            UserDefaults.standard.set(isMidiInEnabled, forKey: midiInEnabledKey)
+        }
+    }
     @Published public var isVirtualSourceActive: Bool = false
     @Published public var availableDestinations: [MIDIDestinationInfo] = []
-    @Published public var selectedDestinationIndex: Int = -1 // -1 = All Destinations (Broadcast)
+    @Published public var selectedDestinationIndex: Int = -1 { // -1 = All Destinations (Broadcast)
+        didSet {
+            guard !isLoadingSettings else { return }
+            if selectedDestinationIndex == -1 {
+                savedDestinationName = nil
+                UserDefaults.standard.removeObject(forKey: selectedDestNameKey)
+            } else if let dest = availableDestinations.first(where: { $0.id == selectedDestinationIndex }) {
+                savedDestinationName = dest.name
+                UserDefaults.standard.set(dest.name, forKey: selectedDestNameKey)
+            }
+        }
+    }
     @Published public var lastSentDescription: String = "None"
     @Published public var lastSentTimestamp: Date? = nil
+
+    private let midiOutEnabledKey = "PowerPresenter.MIDI.isOutEnabled"
+    private let midiInEnabledKey = "PowerPresenter.MIDI.isInEnabled"
+    private let selectedDestNameKey = "PowerPresenter.MIDI.selectedDestinationName"
+    private var savedDestinationName: String? = nil
+    private var isLoadingSettings = false
 
     private var midiClient = MIDIClientRef()
     private var virtualSourceEndpoint = MIDIEndpointRef()
@@ -26,7 +53,22 @@ public final class MIDIManager: ObservableObject {
     private var inputPort = MIDIPortRef()
 
     private init() {
+        loadSavedSettings()
         setupMIDI()
+    }
+
+    private func loadSavedSettings() {
+        isLoadingSettings = true
+        defer { isLoadingSettings = false }
+
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: midiOutEnabledKey) != nil {
+            self.isMidiOutEnabled = defaults.bool(forKey: midiOutEnabledKey)
+        }
+        if defaults.object(forKey: midiInEnabledKey) != nil {
+            self.isMidiInEnabled = defaults.bool(forKey: midiInEnabledKey)
+        }
+        self.savedDestinationName = defaults.string(forKey: selectedDestNameKey)
     }
 
     nonisolated private static func makeNotifyBlock(manager: MIDIManager) -> MIDINotifyBlock {
@@ -107,6 +149,17 @@ public final class MIDIManager: ObservableObject {
         }
 
         self.availableDestinations = list
+
+        isLoadingSettings = true
+        defer { isLoadingSettings = false }
+        if let savedName = savedDestinationName,
+           let matched = list.first(where: { $0.name == savedName }) {
+            self.selectedDestinationIndex = matched.id
+        } else {
+            // Either All Destinations (-1) was chosen, or the saved device is temporarily disconnected;
+            // fall back to Broadcast without erasing `savedDestinationName` so reconnect restores it.
+            self.selectedDestinationIndex = -1
+        }
     }
 
     private func connectAllSourcesToInputPort() {
